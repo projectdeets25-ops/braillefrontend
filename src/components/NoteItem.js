@@ -19,10 +19,30 @@ const NoteItem = ({ note, formatDate, onClick }) => {
     }
   };
 
-  // Function to create a preview of the content
+  // Function to create a preview of the content. Accepts either a string
+  // (legacy) or an object `generatedNotes` with language keys.
   const createPreview = (content) => {
-    // Remove markdown syntax and get plain text
-    const plainText = content
+    let text = '';
+
+    if (!content) return '';
+
+    if (typeof content === 'string') {
+      text = content;
+    } else if (typeof content === 'object') {
+      // Prefer english, then hindi, then braille, then first available
+      if (content.english) text = content.english;
+      else if (content.hindi) text = content.hindi;
+      else if (content.braille) text = content.braille;
+      else {
+        const firstKey = Object.keys(content)[0];
+        text = content[firstKey] || '';
+      }
+    } else {
+      text = String(content);
+    }
+
+    // Strip common markdown and code blocks for preview
+    const plainText = text
       .replace(/#{1,6}\s+/g, '') // Remove headers
       .replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold
       .replace(/\*(.*?)\*/g, '$1') // Remove italic
@@ -32,10 +52,10 @@ const NoteItem = ({ note, formatDate, onClick }) => {
       .replace(/^\s*\d+\.\s+/gm, '') // Remove numbered lists
       .replace(/\n+/g, ' ') // Replace newlines with spaces
       .trim();
-    
+
     // Limit to 150 characters
-    const preview = plainText.length > 150 
-      ? plainText.substring(0, 150) + '...' 
+    const preview = plainText.length > 150
+      ? plainText.substring(0, 150) + '...'
       : plainText;
     return preview;
   };
