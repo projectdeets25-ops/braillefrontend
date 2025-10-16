@@ -281,6 +281,13 @@
   flex-shrink: 0;
 }
 
+/* TTS highlighting */
+.tts-word { transition: background-color 0.12s ease, color 0.12s ease; }
+.tts-word-active { background: #fffbcc; color: #111; padding: 2px 4px; border-radius: 4px; }
+.modal-play-button, .modal-stop-button { padding:8px 12px; border-radius:6px; border:none; cursor:pointer }
+.modal-play-button { background:#2563eb; color:white }
+.modal-stop-button { background:#ef4444; color:white }
+
 .modal-close-button {
   background: #4a90e2;
   color: white;

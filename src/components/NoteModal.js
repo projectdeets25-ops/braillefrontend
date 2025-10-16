@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import notesApi from '../services/notesApi';
 import ReactMarkdown from 'react-markdown';
 import './NoteModal.css';
@@ -22,6 +22,64 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     setDetectedSubject(note ? note.detectedSubject || '' : '');
     setOriginalContent(note ? note.originalContent || '' : '');
   }, [note]);
+
+  // If user switches language tab while speaking, stop/reset speech
+  useEffect(() => {
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      setIsPaused(false);
+      setCurrentWordIndex(-1);
+    }
+  }, [activeLang]);
+
+  // Text-to-speech state and refs
+  const utteranceRef = useRef(null);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [currentWordIndex, setCurrentWordIndex] = useState(-1);
+  const [words, setWords] = useState([]);
+  const [wordStartIndices, setWordStartIndices] = useState([]);
+
+  // Helper: strip markdown to plain text for TTS and highlighting
+  const stripMarkdown = (text) => {
+    if (!text || typeof text !== 'string') return '';
+    return text
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/#{1,6}\s+/g, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/`(.*?)`/g, '$1')
+      .replace(/^\s*[-*+]\s+/gm, '')
+      .replace(/^\s*\d+\.\s+/gm, '')
+      .replace(/\n+/g, ' ')
+      .trim();
+  };
+
+  // Prepare words and their start indices for boundary mapping
+  const prepareWordsForHighlight = (plainText) => {
+    const w = plainText.match(/\S+/g) || [];
+    const starts = [];
+    let searchIndex = 0;
+    for (let i = 0; i < w.length; i++) {
+      const word = w[i];
+      const idx = plainText.indexOf(word, searchIndex);
+      starts.push(idx === -1 ? 0 : idx);
+      searchIndex = (idx === -1 ? searchIndex : idx + word.length);
+    }
+    setWords(w);
+    setWordStartIndices(starts);
+  };
+
+  // Cleanup any running speech when modal closes or component unmounts
+  useEffect(() => {
+    return () => {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {}
+      utteranceRef.current = null;
+    };
+  }, []);
 
   if (!isOpen || !note) return null;
 
@@ -51,6 +109,87 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     if (e.key === 'Escape') {
       onClose();
     }
+  };
+
+  // TTS controls
+  const supportedLang = (lang) => {
+    if (!lang) return false;
+    const l = lang.toLowerCase();
+    return l.includes('english') || l.includes('en') || l.includes('hindi') || l.includes('hi');
+  };
+
+  const speakText = (text, langCode) => {
+    if (!text || !('speechSynthesis' in window)) return;
+
+    window.speechSynthesis.cancel();
+    const plain = stripMarkdown(text);
+    prepareWordsForHighlight(plain);
+
+    const utter = new SpeechSynthesisUtterance(plain);
+    utter.lang = langCode || (detectedLanguage ? detectedLanguage : 'en-US');
+    utter.onstart = () => {
+      setIsSpeaking(true);
+      setIsPaused(false);
+      setCurrentWordIndex(-1);
+    };
+
+    // Fallback: use boundary event if available, otherwise approximate via word timings
+    utter.onboundary = (e) => {
+      if (e.name === 'word' || e.name === 'word' /* some browsers */) {
+        const charIndex = e.charIndex || 0;
+        // find nearest word index
+        let wi = 0;
+        for (let i = 0; i < wordStartIndices.length; i++) {
+          if (wordStartIndices[i] <= charIndex) wi = i;
+          else break;
+        }
+        setCurrentWordIndex(wi);
+      }
+    };
+
+    utter.onend = () => {
+      setIsSpeaking(false);
+      setIsPaused(false);
+      setCurrentWordIndex(-1);
+    };
+
+    utter.onerror = () => {
+      setIsSpeaking(false);
+      setIsPaused(false);
+    };
+
+    utteranceRef.current = utter;
+    window.speechSynthesis.speak(utter);
+  };
+
+  const handlePlayPause = () => {
+    if (!note) return;
+    const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
+    const content = g[activeLang] || g[Object.keys(g)[0]] || '';
+
+    // language code choice
+    const langCode = activeLang === 'hindi' ? 'hi-IN' : 'en-US';
+
+    if (isSpeaking && !isPaused) {
+      // pause
+      window.speechSynthesis.pause();
+      setIsPaused(true);
+    } else if (isSpeaking && isPaused) {
+      // resume
+      window.speechSynthesis.resume();
+      setIsPaused(false);
+    } else {
+      // start speaking
+      if (!supportedLang(activeLang) && !supportedLang(detectedLanguage)) return;
+      speakText(content, langCode);
+    }
+  };
+
+  const handleStop = () => {
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+    setIsPaused(false);
+    setCurrentWordIndex(-1);
   };
 
   return (
@@ -102,7 +241,30 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
                   {(() => {
                     const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
                     const content = g[activeLang] || g[Object.keys(g)[0]] || '';
-                    return <ReactMarkdown>{content}</ReactMarkdown>;
+                    // Render markdown but also wrap for highlighting
+                    const plain = stripMarkdown(content);
+                    // Split into spans so we can highlight current word
+                    const wordsForRender = plain.match(/\S+/g) || [];
+                    let charIndex = 0;
+                    return (
+                      <div className="tts-text" aria-live="polite">
+                        {wordsForRender.map((w, i) => {
+                          const start = plain.indexOf(w, charIndex);
+                          charIndex = start + w.length;
+                          const isActive = i === currentWordIndex;
+                          return (
+                            <span
+                              key={i}
+                              data-word-index={i}
+                              className={`tts-word ${isActive ? 'tts-word-active' : ''}`}
+                              style={{ marginRight: '4px' }}
+                            >
+                              {w}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    );
                   })()}
                 </div>
               </div>
@@ -162,6 +324,21 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
         </div>
 
         <div className="modal-footer">
+          {/* TTS controls: only show for English/Hindi */}
+          {note && ( () => {
+            const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
+            const content = g[activeLang] || g[Object.keys(g)[0]] || '';
+            const langSupported = supportedLang(activeLang) || supportedLang(detectedLanguage);
+            if (!content || !langSupported) return null;
+            return (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginRight: 'auto' }}>
+                <button className="modal-play-button" onClick={handlePlayPause}>
+                  {isSpeaking ? (isPaused ? 'Resume' : 'Pause') : 'Play'}
+                </button>
+                <button className="modal-stop-button" onClick={handleStop}>Stop</button>
+              </div>
+            );
+          })()}
           {isAdmin && !editing && (
             <button className="modal-edit-button" onClick={() => setEditing(true)}>Edit</button>
           )}
