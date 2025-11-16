@@ -22,6 +22,15 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     setDetectedSubject(note ? note.detectedSubject || '' : '');
     setOriginalContent(note ? note.originalContent || '' : '');
   }, [note]);
+  
+  // Set active language to a sensible available language when note changes
+  useEffect(() => {
+    if (!note) return;
+    const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
+    const keys = Object.keys(g);
+    const preferred = keys.includes('english') ? 'english' : keys.includes('hindi') ? 'hindi' : keys.includes('braille') ? 'braille' : (keys[0] || 'english');
+    setActiveLang(preferred);
+  }, [note]);
 
   // If user switches language tab while speaking, stop/reset speech
   useEffect(() => {
@@ -83,21 +92,14 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
 
   if (!isOpen || !note) return null;
 
-  const getInputTypeIcon = (inputType) => {
-    switch (inputType) {
-      case 'text': return '📝';
-      case 'audio': return '🎵';
-      default: return '📄';
-    }
-  };
+  // languages available in this note (dynamic)
+  const availableLangs = (() => {
+    const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
+    const keys = Object.keys(g || {});
+    return keys.length ? keys : ['english'];
+  })();
 
-  const getInputTypeLabel = (inputType) => {
-    switch (inputType) {
-      case 'text': return 'Text Note';
-      case 'audio': return 'Audio Note';
-      default: return 'Unknown Type';
-    }
-  };
+  // Note: we intentionally removed visual input-type icons/labels to match the new UI.
 
   const handleBackdropClick = (e) => {
     if (e.target === e.currentTarget) {
@@ -202,22 +204,13 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
       <div className="modal-container">
         <div className="modal-header">
           <div className="modal-title-section">
-            <div className="modal-type-badge">
-              <span className="modal-type-icon">{getInputTypeIcon(note.inputType)}</span>
-              <span className="modal-type-label">{getInputTypeLabel(note.inputType)}</span>
-            </div>
-            <div className="modal-dates">
-              <div className="modal-date">
-                <strong>Created:</strong> {formatDate(note.createdAt)}
-              </div>
-              {note.updatedAt && note.updatedAt !== note.createdAt && (
-                <div className="modal-date">
-                  <strong>Updated:</strong> {formatDate(note.updatedAt)}
-                </div>
-              )}
+            <div className="modal-meta">
+              <div className="modal-subject">{detectedSubject || 'General'}</div>
+              <div className="modal-date"><strong>Created:</strong> {formatDate(note.createdAt)}</div>
+              <div className="modal-lang">Language: {detectedLanguage || 'Unknown'}</div>
             </div>
           </div>
-          <button 
+          <button
             className="modal-close-btn"
             onClick={onClose}
             aria-label="Close modal"
@@ -227,118 +220,106 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
         </div>
 
         <div className="modal-content">
-          <div className="modal-note-content">
-            {!editing && (
-              // Tabs to switch between languages when viewing
-              <div className="generated-notes-view">
-                <div className="lang-tabs">
-                  <button className={`lang-tab ${activeLang === 'english' ? 'active' : ''}`} onClick={() => setActiveLang('english')}>English</button>
-                  <button className={`lang-tab ${activeLang === 'hindi' ? 'active' : ''}`} onClick={() => setActiveLang('hindi')}>Hindi</button>
-                  <button className={`lang-tab ${activeLang === 'braille' ? 'active' : ''}`} onClick={() => setActiveLang('braille')}>Braille</button>
-                </div>
+          <div className="modal-grid">
+            <aside className="modal-side">
+              <div className="side-section">
+                <div className="side-label">Subject</div>
+                <div className="side-value">{detectedSubject || 'General'}</div>
+              </div>
+              <div className="side-section">
+                <div className="side-label">Language</div>
+                <div className="side-value">{detectedLanguage || 'Unknown'}</div>
+              </div>
+              <div className="side-section">
+                <div className="side-label">Original</div>
+                <div className="side-value small">{originalContent ? (originalContent.substring(0, 140) + (originalContent.length > 140 ? '...' : '')) : '—'}</div>
+              </div>
 
-                <div className="lang-content">
-                  {(() => {
-                    const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
-                    const content = g[activeLang] || g[Object.keys(g)[0]] || '';
-                    // Render markdown but also wrap for highlighting
-                    const plain = stripMarkdown(content);
-                    // Split into spans so we can highlight current word
-                    const wordsForRender = plain.match(/\S+/g) || [];
-                    let charIndex = 0;
-                    return (
-                      <div className="tts-text" aria-live="polite">
-                        {wordsForRender.map((w, i) => {
-                          const start = plain.indexOf(w, charIndex);
-                          charIndex = start + w.length;
-                          const isActive = i === currentWordIndex;
-                          return (
-                            <span
-                              key={i}
-                              data-word-index={i}
-                              className={`tts-word ${isActive ? 'tts-word-active' : ''}`}
-                              style={{ marginRight: '4px' }}
-                            >
-                              {w}
-                            </span>
-                          );
-                        })}
+              {/* Compact TTS controls on the side */}
+              <div className="side-tts">
+                {note && (() => {
+                  const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
+                  const content = g[activeLang] || g[Object.keys(g)[0]] || '';
+                  const langSupported = supportedLang(activeLang) || supportedLang(detectedLanguage);
+                  if (!content || !langSupported) return null;
+                  return (
+                    <>
+                      <button className="modal-play-button" onClick={handlePlayPause}>
+                        {isSpeaking ? (isPaused ? 'Resume' : 'Pause') : 'Play'}
+                      </button>
+                      <button className="modal-stop-button" onClick={handleStop}>Stop</button>
+                    </>
+                  );
+                })()}
+              </div>
+            </aside>
+
+            <section className="modal-main">
+              {!editing && (
+                <>
+                  <div className="lang-selector" role="tablist" aria-label="Select language">
+                    {availableLangs.map((lang) => (
+                      <button
+                        key={lang}
+                        role="tab"
+                        aria-selected={activeLang === lang}
+                        className={`lang-btn ${activeLang === lang ? 'active' : ''}`}
+                        onClick={() => setActiveLang(lang)}
+                      >
+                        {lang.charAt(0).toUpperCase() + lang.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="rendered-markdown" data-lang={activeLang}>
+                    {(() => {
+                      const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
+                      const content = g[activeLang] || g[Object.keys(g)[0]] || '';
+                      return (
+                        <ReactMarkdown>
+                          {content || '*No content*'}
+                        </ReactMarkdown>
+                      );
+                    })()}
+                  </div>
+                </>
+              )}
+
+              {editing && (
+                <div className="note-edit-form">
+                  {/* dynamic edit fields for each available generated language */}
+                  {Object.keys(generatedNotesValue || {}).length > 0 ? (
+                    Object.keys(generatedNotesValue).map((lng) => (
+                      <div key={lng}>
+                        <label>{lng.charAt(0).toUpperCase() + lng.slice(1)}</label>
+                        <textarea
+                          value={generatedNotesValue[lng] || ''}
+                          onChange={(e) => setGeneratedNotesValue({ ...generatedNotesValue, [lng]: e.target.value })}
+                        />
                       </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
-
-            {editing && (
-              <div className="note-edit-form">
-                <div className="edit-lang-tabs">
-                  <button className={`lang-tab ${activeLang === 'english' ? 'active' : ''}`} onClick={() => setActiveLang('english')}>English</button>
-                  <button className={`lang-tab ${activeLang === 'hindi' ? 'active' : ''}`} onClick={() => setActiveLang('hindi')}>Hindi</button>
-                  <button className={`lang-tab ${activeLang === 'braille' ? 'active' : ''}`} onClick={() => setActiveLang('braille')}>Braille</button>
-                </div>
-
-                <div className="edit-lang-content">
-                  {activeLang === 'english' && (
+                    ))
+                  ) : (
                     <div>
-                      <label>English</label>
-                      <textarea
-                        value={generatedNotesValue.english || ''}
-                        onChange={(e) => setGeneratedNotesValue({ ...generatedNotesValue, english: e.target.value })}
-                      />
+                      <div>No generated languages found.</div>
+                      <button onClick={() => setGeneratedNotesValue({ english: '' })}>Add English</button>
                     </div>
                   )}
 
-                  {activeLang === 'hindi' && (
-                    <div>
-                      <label>Hindi</label>
-                      <textarea
-                        value={generatedNotesValue.hindi || ''}
-                        onChange={(e) => setGeneratedNotesValue({ ...generatedNotesValue, hindi: e.target.value })}
-                      />
-                    </div>
-                  )}
+                  <label>Detected Language</label>
+                  <input value={detectedLanguage} onChange={(e) => setDetectedLanguage(e.target.value)} />
 
-                  {activeLang === 'braille' && (
-                    <div>
-                      <label>Braille</label>
-                      <textarea
-                        value={generatedNotesValue.braille || ''}
-                        onChange={(e) => setGeneratedNotesValue({ ...generatedNotesValue, braille: e.target.value })}
-                      />
-                    </div>
-                  )}
+                  <label>Detected Subject</label>
+                  <input value={detectedSubject} onChange={(e) => setDetectedSubject(e.target.value)} />
+
+                  <label>Original Content</label>
+                  <textarea value={originalContent} onChange={(e) => setOriginalContent(e.target.value)} />
                 </div>
-
-                <label>Detected Language</label>
-                <input value={detectedLanguage} onChange={(e) => setDetectedLanguage(e.target.value)} />
-
-                <label>Detected Subject</label>
-                <input value={detectedSubject} onChange={(e) => setDetectedSubject(e.target.value)} />
-
-                <label>Original Content</label>
-                <textarea value={originalContent} onChange={(e) => setOriginalContent(e.target.value)} />
-              </div>
-            )}
+              )}
+            </section>
           </div>
         </div>
 
         <div className="modal-footer">
-          {/* TTS controls: only show for English/Hindi */}
-          {note && ( () => {
-            const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
-            const content = g[activeLang] || g[Object.keys(g)[0]] || '';
-            const langSupported = supportedLang(activeLang) || supportedLang(detectedLanguage);
-            if (!content || !langSupported) return null;
-            return (
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginRight: 'auto' }}>
-                <button className="modal-play-button" onClick={handlePlayPause}>
-                  {isSpeaking ? (isPaused ? 'Resume' : 'Pause') : 'Play'}
-                </button>
-                <button className="modal-stop-button" onClick={handleStop}>Stop</button>
-              </div>
-            );
-          })()}
           {isAdmin && !editing && (
             <button className="modal-edit-button" onClick={() => setEditing(true)}>Edit</button>
           )}
