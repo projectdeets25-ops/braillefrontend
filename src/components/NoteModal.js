@@ -137,21 +137,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     const plain = stripMarkdown(text);
     prepareWordsForHighlight(plain);
 
-    // Wait briefly for voices to load (don't block too long)
-    await new Promise((resolve) => {
-      const voices = window.speechSynthesis.getVoices();
-      if (voices && voices.length) return resolve();
-      const handler = () => {
-        try { window.speechSynthesis.onvoiceschanged = null; } catch (e) {}
-        resolve();
-      };
-      window.speechSynthesis.onvoiceschanged = handler;
-      // slightly longer timeout for slow mobiles
-      setTimeout(() => {
-        try { window.speechSynthesis.onvoiceschanged = null; } catch (e) {}
-        resolve();
-      }, 7000);
-    });
+    // Do NOT wait here for voices to load — call speak immediately inside user gesture to avoid mobile blocking.
 
     const utter = new SpeechSynthesisUtterance(plain);
     const lc = (langCode && String(langCode)) || (detectedLanguage && String(detectedLanguage)) || activeLang || 'en-US';
