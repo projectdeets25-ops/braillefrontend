@@ -150,7 +150,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
       setTimeout(() => {
         try { window.speechSynthesis.onvoiceschanged = null; } catch (e) {}
         resolve();
-      }, 2500);
+      }, 7000);
     });
 
     const utter = new SpeechSynthesisUtterance(plain);
