@@ -127,199 +127,68 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
   };
 
   const speakText = async (text, langCode) => {
-    if (!text || !('speechSynthesis' in window)) return;
+    if (!text || !('speechSynthesis' in window)) {
+      console.warn('[TTS] Speech Synthesis not supported');
+      setTtsStatus('unsupported');
+      return;
+    }
 
-    window.speechSynthesis.cancel();
+    try { window.speechSynthesis.cancel(); } catch (e) {}
     const plain = stripMarkdown(text);
     prepareWordsForHighlight(plain);
 
+    // Wait briefly for voices to load (don't block too long)
+    await new Promise((resolve) => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices && voices.length) return resolve();
+      const handler = () => {
+        try { window.speechSynthesis.onvoiceschanged = null; } catch (e) {}
+        resolve();
+      };
+      window.speechSynthesis.onvoiceschanged = handler;
+      setTimeout(() => {
+        try { window.speechSynthesis.onvoiceschanged = null; } catch (e) {}
+        resolve();
+      }, 1500);
+    });
+
     const utter = new SpeechSynthesisUtterance(plain);
-
-    // Determine language code to use (prefer explicit langCode, then detectedLanguage, then activeLang)
     const lc = (langCode && String(langCode)) || (detectedLanguage && String(detectedLanguage)) || activeLang || 'en-US';
-    let langCodeFinal = 'en-US';
-    try {
-      const lower = lc.toLowerCase();
-      if (lower.includes('hi') || lower.includes('hindi')) langCodeFinal = 'hi-IN';
-      else if (lower.includes('en')) langCodeFinal = 'en-US';
-      else langCodeFinal = lc;
-    } catch (e) {
-      langCodeFinal = 'en-US';
-    }
+    const lower = lc.toLowerCase();
+    utter.lang = (lower.includes('hi') || lower.includes('hindi')) ? 'hi-IN' : 'en-US';
+    utter.rate = 0.95;
+    utter.pitch = 1.0;
+    utter.volume = 1.0;
 
-    utter.lang = langCodeFinal;
-
-    
-
-    // Try to pick a matching voice for the language to improve reliability (some browsers need voice selection)
-    const pickAndAssignVoice = () => {
-      try {
-        const voices = window.speechSynthesis.getVoices() || [];
-        if (!voices.length) return false;
-        const lp = (langCodeFinal || 'en-US').toLowerCase().split('-')[0];
-        let v = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith(lp));
-        if (!v) v = voices.find((v) => v.lang && v.lang.toLowerCase().includes(lp));
-        if (v) {
-          utter.voice = v;
-          return true;
-        }
-      } catch (e) {}
-      return false;
-    };
-
-    // Attempt to assign a voice immediately if available.
-    let voiceAssigned = false;
-    try {
-      voiceAssigned = pickAndAssignVoice();
-      console.log('[TTS] pickAndAssignVoice ->', voiceAssigned ? 'voice assigned' : 'no voice');
-    } catch (e) {
-      console.warn('[TTS] pickAndAssignVoice error', e);
-    }
+    const voices = window.speechSynthesis.getVoices() || [];
+    const langPrefix = utter.lang.split('-')[0];
+    const matched = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith(langPrefix));
+    if (matched) utter.voice = matched;
 
     utter.onstart = () => {
-      console.log('[TTS] utter onstart');
-      utterStartedRef.current = true;
-      if (ttsFallbackTimerRef.current) {
-        clearTimeout(ttsFallbackTimerRef.current);
-        ttsFallbackTimerRef.current = null;
-      }
       setIsSpeaking(true);
       setIsPaused(false);
-      setCurrentWordIndex(-1);
+      setTtsStatus('playing');
     };
-
-    // Fallback: use boundary event if available, otherwise approximate via word timings
-    utter.onboundary = (e) => {
-      if (e.name === 'word' || e.name === 'word' /* some browsers */) {
-        const charIndex = e.charIndex || 0;
-        // find nearest word index
-        let wi = 0;
-        for (let i = 0; i < wordStartIndices.length; i++) {
-          if (wordStartIndices[i] <= charIndex) wi = i;
-          else break;
-        }
-        setCurrentWordIndex(wi);
-      }
-    };
-
     utter.onend = () => {
-      console.log('[TTS] utter onend');
       setIsSpeaking(false);
       setIsPaused(false);
-      setCurrentWordIndex(-1);
+      setTtsStatus('');
     };
-
-    utter.onerror = (err) => {
-      console.error('[TTS] utter onerror', err);
+    utter.onerror = (e) => {
+      console.error('[TTS] utter error', e);
       setIsSpeaking(false);
       setIsPaused(false);
+      setTtsStatus('error');
     };
 
     utteranceRef.current = utter;
-    // Try speaking immediately (log voices available). If no native voices are present, fallback to mespeak (client-side WebAssembly/JS TTS).
-      try {
-      const allVoices = window.speechSynthesis.getVoices() || [];
-      console.log('[TTS] speaking. voices available:', allVoices.length, 'lang:', langCodeFinal, 'voiceChosen:', utter.voice && utter.voice.name);
-      setTtsStatus(`voices:${allVoices.length} lang:${langCodeFinal} voice:${utter.voice && utter.voice.name ? utter.voice.name : 'none'}`);
-
-      if (!voiceAssigned && (!allVoices || allVoices.length === 0)) {
-        // Fallback: use mespeak (client-side JS TTS) to synthesize without server.
-        try {
-          if (!mespeakRef.current) {
-            // dynamic import so it's only loaded when needed
-            const mespeakModule = await import('mespeak');
-            // load default config
-            try {
-              const cfg = (await import('mespeak/src/mespeak_config.json')).default;
-              mespeakModule.loadConfig(cfg);
-            } catch (e) {
-              console.warn('[TTS] mespeak config load failed', e);
-            }
-            mespeakRef.current = mespeakModule;
-          }
-
-          const ms = mespeakRef.current;
-          // attempt to load a voice matching language prefix (en/hi). fall back to en if unavailable.
-          const prefix = (langCodeFinal || 'en-US').split('-')[0].toLowerCase();
-          let voiceLoaded = false;
-          try {
-            if (prefix === 'hi') {
-              const v = (await import('mespeak/voices/hi/hi.json')).default;
-              voiceLoaded = !!ms.loadVoice(v);
-            } else {
-              const v = (await import('mespeak/voices/en/en-us.json')).default;
-              voiceLoaded = !!ms.loadVoice(v);
-            }
-          } catch (e) {
-            console.warn('[TTS] mespeak voice load failed, trying en', e);
-            try {
-              const v = (await import('mespeak/voices/en/en-us.json')).default;
-              voiceLoaded = !!ms.loadVoice(v);
-            } catch (err) {
-              console.warn('[TTS] mespeak fallback voice load failed', err);
-            }
-          }
-
-          console.log('[TTS] mespeak speak (voiceLoaded=' + voiceLoaded + ')');
-          setTtsStatus('using mespeak fallback');
-          const ok = ms.speak(plain);
-          utteranceRef.current = { type: 'mespeak', module: ms };
-          setIsSpeaking(true);
-          setIsPaused(false);
-          return;
-        } catch (err) {
-          console.error('[TTS] mespeak fallback failed', err);
-          // fall through to native attempt
-        }
-      }
-
-      // speak natively, but set a fallback timer: if onstart doesn't fire quickly, fallback to mespeak
-        try {
-          utterStartedRef.current = false;
-          setTtsStatus('attempting native speak');
-          window.speechSynthesis.speak(utter);
-          if (!utterStartedRef.current) {
-            // wait up to 900ms for onstart; if not started, fallback
-            ttsFallbackTimerRef.current = setTimeout(async () => {
-              ttsFallbackTimerRef.current = null;
-              if (!utterStartedRef.current) {
-                console.warn('[TTS] native utter did not start, falling back to mespeak');
-                setTtsStatus('native did not start — falling back');
-                // try mespeak fallback
-                try {
-                  if (!mespeakRef.current) {
-                    const mespeakModule = await import('mespeak');
-                    try {
-                      const cfg = (await import('mespeak/src/mespeak_config.json')).default;
-                      mespeakModule.loadConfig(cfg);
-                    } catch (e) { console.warn('[TTS] mespeak config load failed', e); }
-                    mespeakRef.current = mespeakModule;
-                  }
-                  const ms = mespeakRef.current;
-                  try {
-                    const v = (await import('mespeak/voices/en/en-us.json')).default;
-                    ms.loadVoice(v);
-                  } catch (e) { /* ignore */ }
-                  setTtsStatus('mespeak fallback speaking');
-                  ms.speak(plain);
-                  utteranceRef.current = { type: 'mespeak', module: ms };
-                  setIsSpeaking(true);
-                  setIsPaused(false);
-                } catch (err) {
-                  console.error('[TTS] mespeak fallback after no-start failed', err);
-                  setTtsStatus('fallback failed');
-                }
-              }
-            }, 900);
-          }
-        } catch (e) {
-          console.error('[TTS] initial speak failed', e);
-          setTtsStatus('native speak error');
-          try { window.speechSynthesis.speak(utter); } catch (err) { console.error('[TTS] fallback speak failed', err); setTtsStatus('speak failed'); }
-        }
+    try {
+      setTtsStatus('speaking');
+      window.speechSynthesis.speak(utter);
     } catch (e) {
-      console.error('[TTS] initial speak failed', e);
-      try { window.speechSynthesis.speak(utter); } catch (err) { console.error('[TTS] fallback speak failed', err); }
+      console.error('[TTS] speak failed', e);
+      setTtsStatus('failed');
     }
   };
 
