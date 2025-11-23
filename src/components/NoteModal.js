@@ -49,6 +49,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
   const [currentWordIndex, setCurrentWordIndex] = useState(-1);
   const [words, setWords] = useState([]);
   const [wordStartIndices, setWordStartIndices] = useState([]);
+  const mespeakRef = useRef(null);
 
   // Helper: strip markdown to plain text for TTS and highlighting
   const stripMarkdown = (text) => {
@@ -120,7 +121,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     return l.includes('english') || l.includes('en') || l.includes('hindi') || l.includes('hi');
   };
 
-  const speakText = (text, langCode) => {
+  const speakText = async (text, langCode) => {
     if (!text || !('speechSynthesis' in window)) return;
 
     window.speechSynthesis.cancel();
@@ -159,11 +160,11 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
       return false;
     };
 
-    // Attempt to assign a voice immediately if available. Do NOT delay speaking waiting for voices,
-    // because on mobile browsers waiting for voices can move us out of the user gesture and block audio.
+    // Attempt to assign a voice immediately if available.
+    let voiceAssigned = false;
     try {
-      const picked = pickAndAssignVoice();
-      console.log('[TTS] pickAndAssignVoice ->', picked ? 'voice assigned' : 'no voice');
+      voiceAssigned = pickAndAssignVoice();
+      console.log('[TTS] pickAndAssignVoice ->', voiceAssigned ? 'voice assigned' : 'no voice');
     } catch (e) {
       console.warn('[TTS] pickAndAssignVoice error', e);
     }
@@ -203,10 +204,61 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     };
 
     utteranceRef.current = utter;
-    // Try speaking immediately (log voices available). Always attempt to speak to stay inside user gesture.
+    // Try speaking immediately (log voices available). If no native voices are present, fallback to mespeak (client-side WebAssembly/JS TTS).
     try {
       const allVoices = window.speechSynthesis.getVoices() || [];
       console.log('[TTS] speaking. voices available:', allVoices.length, 'lang:', langCodeFinal, 'voiceChosen:', utter.voice && utter.voice.name);
+
+      if (!voiceAssigned && (!allVoices || allVoices.length === 0)) {
+        // Fallback: use mespeak (client-side JS TTS) to synthesize without server.
+        try {
+          if (!mespeakRef.current) {
+            // dynamic import so it's only loaded when needed
+            const mespeakModule = await import('mespeak');
+            // load default config
+            try {
+              const cfg = (await import('mespeak/src/mespeak_config.json')).default;
+              mespeakModule.loadConfig(cfg);
+            } catch (e) {
+              console.warn('[TTS] mespeak config load failed', e);
+            }
+            mespeakRef.current = mespeakModule;
+          }
+
+          const ms = mespeakRef.current;
+          // attempt to load a voice matching language prefix (en/hi). fall back to en if unavailable.
+          const prefix = (langCodeFinal || 'en-US').split('-')[0].toLowerCase();
+          let voiceLoaded = false;
+          try {
+            if (prefix === 'hi') {
+              const v = (await import('mespeak/voices/hi/hi.json')).default;
+              voiceLoaded = !!ms.loadVoice(v);
+            } else {
+              const v = (await import('mespeak/voices/en/en-us.json')).default;
+              voiceLoaded = !!ms.loadVoice(v);
+            }
+          } catch (e) {
+            console.warn('[TTS] mespeak voice load failed, trying en', e);
+            try {
+              const v = (await import('mespeak/voices/en/en-us.json')).default;
+              voiceLoaded = !!ms.loadVoice(v);
+            } catch (err) {
+              console.warn('[TTS] mespeak fallback voice load failed', err);
+            }
+          }
+
+          console.log('[TTS] mespeak speak (voiceLoaded=' + voiceLoaded + ')');
+          const ok = ms.speak(plain);
+          utteranceRef.current = { type: 'mespeak', module: ms };
+          setIsSpeaking(true);
+          setIsPaused(false);
+          return;
+        } catch (err) {
+          console.error('[TTS] mespeak fallback failed', err);
+          // fall through to native attempt
+        }
+      }
+
       window.speechSynthesis.speak(utter);
     } catch (e) {
       console.error('[TTS] initial speak failed', e);
@@ -258,6 +310,17 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
   };
 
   const handleStop = () => {
+    try {
+      // stop mespeak if it's playing
+      if (utteranceRef.current && utteranceRef.current.type === 'mespeak' && mespeakRef.current) {
+        try { mespeakRef.current.stop && mespeakRef.current.stop(); } catch (e) {}
+        utteranceRef.current = null;
+        setIsSpeaking(false);
+        setIsPaused(false);
+        setCurrentWordIndex(-1);
+        return;
+      }
+    } catch (e) {}
     window.speechSynthesis.cancel();
     setIsSpeaking(false);
     setIsPaused(false);
