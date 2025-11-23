@@ -50,6 +50,9 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
   const [words, setWords] = useState([]);
   const [wordStartIndices, setWordStartIndices] = useState([]);
   const mespeakRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const ttsFallbackTimerRef = useRef(null);
+  const utterStartedRef = useRef(false);
 
   // Helper: strip markdown to plain text for TTS and highlighting
   const stripMarkdown = (text) => {
@@ -171,6 +174,11 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
 
     utter.onstart = () => {
       console.log('[TTS] utter onstart');
+      utterStartedRef.current = true;
+      if (ttsFallbackTimerRef.current) {
+        clearTimeout(ttsFallbackTimerRef.current);
+        ttsFallbackTimerRef.current = null;
+      }
       setIsSpeaking(true);
       setIsPaused(false);
       setCurrentWordIndex(-1);
@@ -259,10 +267,73 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
         }
       }
 
-      window.speechSynthesis.speak(utter);
+      // speak natively, but set a fallback timer: if onstart doesn't fire quickly, fallback to mespeak
+      try {
+        utterStartedRef.current = false;
+        window.speechSynthesis.speak(utter);
+        if (!utterStartedRef.current) {
+          // wait up to 900ms for onstart; if not started, fallback
+          ttsFallbackTimerRef.current = setTimeout(async () => {
+            ttsFallbackTimerRef.current = null;
+            if (!utterStartedRef.current) {
+              console.warn('[TTS] native utter did not start, falling back to mespeak');
+              // try mespeak fallback
+              try {
+                if (!mespeakRef.current) {
+                  const mespeakModule = await import('mespeak');
+                  try {
+                    const cfg = (await import('mespeak/src/mespeak_config.json')).default;
+                    mespeakModule.loadConfig(cfg);
+                  } catch (e) { console.warn('[TTS] mespeak config load failed', e); }
+                  mespeakRef.current = mespeakModule;
+                }
+                const ms = mespeakRef.current;
+                try {
+                  const v = (await import('mespeak/voices/en/en-us.json')).default;
+                  ms.loadVoice(v);
+                } catch (e) { /* ignore */ }
+                ms.speak(plain);
+                utteranceRef.current = { type: 'mespeak', module: ms };
+                setIsSpeaking(true);
+                setIsPaused(false);
+              } catch (err) {
+                console.error('[TTS] mespeak fallback after no-start failed', err);
+              }
+            }
+          }, 900);
+        }
+      } catch (e) {
+        console.error('[TTS] initial speak failed', e);
+        try { window.speechSynthesis.speak(utter); } catch (err) { console.error('[TTS] fallback speak failed', err); }
+      }
     } catch (e) {
       console.error('[TTS] initial speak failed', e);
       try { window.speechSynthesis.speak(utter); } catch (err) { console.error('[TTS] fallback speak failed', err); }
+    }
+  };
+
+  // Ensure AudioContext unlocked on mobile (user gesture) to avoid audio being blocked
+  const ensureAudioUnlocked = () => {
+    try {
+      if (!window) return;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      if (!audioCtxRef.current) audioCtxRef.current = new AC();
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+        ctx.resume().then(() => console.log('[TTS] AudioContext resumed')).catch(() => {});
+      }
+      // play a tiny silent buffer to unlock
+      try {
+        const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ctx.destination);
+        src.start(0);
+        setTimeout(() => { try { src.disconnect(); } catch (e) {} }, 50);
+      } catch (e) {}
+    } catch (e) {
+      console.warn('[TTS] ensureAudioUnlocked failed', e);
     }
   };
 
@@ -274,6 +345,8 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     // language code choice
     const langCode = activeLang === 'hindi' ? 'hi-IN' : 'en-US';
     console.log('[TTS] play/pause clicked', { activeLang, isSpeaking, isPaused, detectedLanguage });
+    // unlock audio context on user gesture to avoid mobile blocking
+    ensureAudioUnlocked();
 
     // Use actual speechSynthesis state for robust pause/resume
     try {
