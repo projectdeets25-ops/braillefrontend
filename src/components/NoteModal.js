@@ -146,10 +146,11 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
         resolve();
       };
       window.speechSynthesis.onvoiceschanged = handler;
+      // slightly longer timeout for slow mobiles
       setTimeout(() => {
         try { window.speechSynthesis.onvoiceschanged = null; } catch (e) {}
         resolve();
-      }, 1500);
+      }, 2500);
     });
 
     const utter = new SpeechSynthesisUtterance(plain);
@@ -185,7 +186,38 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     utteranceRef.current = utter;
     try {
       setTtsStatus('speaking');
-      window.speechSynthesis.speak(utter);
+      // clear any previous monitor
+      if (ttsFallbackTimerRef.current) {
+        clearTimeout(ttsFallbackTimerRef.current);
+        ttsFallbackTimerRef.current = null;
+      }
+      // monitor native start
+      let started = false;
+      const onStart = () => { started = true; setTtsStatus('playing'); };
+      utter.addEventListener && utter.addEventListener('start', onStart);
+      try {
+        window.speechSynthesis.speak(utter);
+      } catch (err) {
+        console.error('[TTS] speak threw', err);
+        setTtsStatus('speak error: ' + (err && err.message ? err.message : String(err)));
+      }
+
+      // after 1500ms, if not started, show status (don't auto-replace)
+      ttsFallbackTimerRef.current = setTimeout(() => {
+        ttsFallbackTimerRef.current = null;
+        if (!started && !isSpeaking) {
+          console.warn('[TTS] native did not start within timeout');
+          setTtsStatus('native did not start');
+        }
+      }, 1500);
+
+      // cleanup: remove onStart when utter ends or errors
+      const cleanup = () => {
+        try { utter.removeEventListener && utter.removeEventListener('start', onStart); } catch (e) {}
+        if (ttsFallbackTimerRef.current) { clearTimeout(ttsFallbackTimerRef.current); ttsFallbackTimerRef.current = null; }
+      };
+      utter.onend = () => { cleanup(); setIsSpeaking(false); setIsPaused(false); setTtsStatus(''); };
+      utter.onerror = (e) => { cleanup(); console.error('[TTS] utter error', e); setIsSpeaking(false); setIsPaused(false); setTtsStatus('error'); };
     } catch (e) {
       console.error('[TTS] speak failed', e);
       setTtsStatus('failed');
