@@ -162,12 +162,14 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     // Attempt to assign a voice immediately if available. Do NOT delay speaking waiting for voices,
     // because on mobile browsers waiting for voices can move us out of the user gesture and block audio.
     try {
-      pickAndAssignVoice();
+      const picked = pickAndAssignVoice();
+      console.log('[TTS] pickAndAssignVoice ->', picked ? 'voice assigned' : 'no voice');
     } catch (e) {
-      // ignore
+      console.warn('[TTS] pickAndAssignVoice error', e);
     }
 
     utter.onstart = () => {
+      console.log('[TTS] utter onstart');
       setIsSpeaking(true);
       setIsPaused(false);
       setCurrentWordIndex(-1);
@@ -188,23 +190,27 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     };
 
     utter.onend = () => {
+      console.log('[TTS] utter onend');
       setIsSpeaking(false);
       setIsPaused(false);
       setCurrentWordIndex(-1);
     };
 
-    utter.onerror = () => {
+    utter.onerror = (err) => {
+      console.error('[TTS] utter onerror', err);
       setIsSpeaking(false);
       setIsPaused(false);
     };
 
     utteranceRef.current = utter;
-    // If voices were already present we can speak immediately, otherwise onVoices handler will speak.
+    // Try speaking immediately (log voices available). Always attempt to speak to stay inside user gesture.
     try {
       const allVoices = window.speechSynthesis.getVoices() || [];
-      if (allVoices.length > 0) window.speechSynthesis.speak(utter);
+      console.log('[TTS] speaking. voices available:', allVoices.length, 'lang:', langCodeFinal, 'voiceChosen:', utter.voice && utter.voice.name);
+      window.speechSynthesis.speak(utter);
     } catch (e) {
-      try { window.speechSynthesis.speak(utter); } catch (err) {}
+      console.error('[TTS] initial speak failed', e);
+      try { window.speechSynthesis.speak(utter); } catch (err) { console.error('[TTS] fallback speak failed', err); }
     }
   };
 
@@ -215,24 +221,40 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
 
     // language code choice
     const langCode = activeLang === 'hindi' ? 'hi-IN' : 'en-US';
-    // New logic: prefer actual speechSynthesis state for robustness
-    const synth = window.speechSynthesis;
-    if (synth.speaking && !synth.paused) {
-      synth.pause();
-      setIsPaused(true);
-      setIsSpeaking(true);
-      return;
-    }
-    if (synth.speaking && synth.paused) {
-      synth.resume();
-      setIsPaused(false);
-      setIsSpeaking(true);
-      return;
+    console.log('[TTS] play/pause clicked', { activeLang, isSpeaking, isPaused, detectedLanguage });
+
+    // Use actual speechSynthesis state for robust pause/resume
+    try {
+      const synth = window.speechSynthesis;
+      if (synth.speaking && !synth.paused) {
+        console.log('[TTS] pausing synth');
+        synth.pause();
+        setIsPaused(true);
+        setIsSpeaking(true);
+        return;
+      }
+      if (synth.speaking && synth.paused) {
+        console.log('[TTS] resuming synth');
+        synth.resume();
+        setIsPaused(false);
+        setIsSpeaking(true);
+        return;
+      }
+    } catch (e) {
+      console.warn('[TTS] synth state check failed', e);
     }
 
-    // Not currently speaking -> start
-    if (!supportedLang(activeLang) && !supportedLang(detectedLanguage)) return;
-    speakText(content, langCode);
+    // Not currently speaking -> start speaking
+    if (!supportedLang(activeLang) && !supportedLang(detectedLanguage)) {
+      console.log('[TTS] language unsupported for TTS', activeLang, detectedLanguage);
+      return;
+    }
+    try {
+      console.log('[TTS] invoking speakText');
+      speakText(content, langCode);
+    } catch (err) {
+      console.error('[TTS] speakText threw', err);
+    }
   };
 
   const handleStop = () => {
