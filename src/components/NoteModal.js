@@ -128,7 +128,40 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     prepareWordsForHighlight(plain);
 
     const utter = new SpeechSynthesisUtterance(plain);
-    utter.lang = langCode || (detectedLanguage ? detectedLanguage : 'en-US');
+
+    // Determine language code to use (prefer explicit langCode, then detectedLanguage, then activeLang)
+    const lc = (langCode && String(langCode)) || (detectedLanguage && String(detectedLanguage)) || activeLang || 'en-US';
+    let langCodeFinal = 'en-US';
+    try {
+      const lower = lc.toLowerCase();
+      if (lower.includes('hi') || lower.includes('hindi')) langCodeFinal = 'hi-IN';
+      else if (lower.includes('en')) langCodeFinal = 'en-US';
+      else langCodeFinal = lc;
+    } catch (e) {
+      langCodeFinal = 'en-US';
+    }
+
+    utter.lang = langCodeFinal;
+
+    // Try to pick a matching voice for the language to improve reliability (some browsers need voice selection)
+    try {
+      const pickVoice = (langPrefix) => {
+        const voices = window.speechSynthesis.getVoices() || [];
+        if (!voices.length) return null;
+        const lp = langPrefix.toLowerCase();
+        // prefer exact prefix match, then contains
+        let v = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith(lp));
+        if (!v) v = voices.find((v) => v.lang && v.lang.toLowerCase().includes(lp));
+        return v || null;
+      };
+
+      const prefix = (langCodeFinal || 'en-US').split('-')[0];
+      const chosen = pickVoice(prefix);
+      if (chosen) utter.voice = chosen;
+    } catch (e) {
+      // ignore voice selection errors
+    }
+
     utter.onstart = () => {
       setIsSpeaking(true);
       setIsPaused(false);
@@ -210,6 +243,9 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
               <div className="modal-lang">Language: {detectedLanguage || 'Unknown'}</div>
             </div>
           </div>
+
+          
+
           <button
             className="modal-close-btn"
             onClick={onClose}
@@ -236,7 +272,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
               </div>
 
               {/* Compact TTS controls on the side */}
-              <div className="side-tts">
+              {/* <div className="side-tts">
                 {note && (() => {
                   const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
                   const content = g[activeLang] || g[Object.keys(g)[0]] || '';
@@ -251,7 +287,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
                     </>
                   );
                 })()}
-              </div>
+              </div> */}
             </aside>
 
             <section className="modal-main">
@@ -320,6 +356,21 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
         </div>
 
         <div className="modal-footer">
+          {/* TTS controls in footer (placed left of other buttons) */}
+          {note && ( () => {
+            const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
+            const content = g[activeLang] || g[Object.keys(g)[0]] || '';
+            const langSupported = supportedLang(activeLang) || supportedLang(detectedLanguage);
+            if (!content || !langSupported) return null;
+            return (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginRight: 'auto' }}>
+                <button className="modal-play-button" onClick={handlePlayPause}>
+                  {isSpeaking ? (isPaused ? 'Resume' : 'Pause') : 'Play'}
+                </button>
+                <button className="modal-stop-button" onClick={handleStop}>Stop</button>
+              </div>
+            );
+          })()}
           {isAdmin && !editing && (
             <button className="modal-edit-button" onClick={() => setEditing(true)}>Edit</button>
           )}

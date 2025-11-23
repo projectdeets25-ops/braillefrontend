@@ -51,6 +51,8 @@
 .rendered-markdown{ color:var(--text); line-height:1.7; font-size:1rem }
 
 .lang-selector{ display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap }
+
+.lang-selector{ display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap }
 .lang-btn{ padding:8px 12px; border-radius:8px; background: rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.03); color:var(--muted); cursor:pointer; font-weight:600 }
 .lang-btn.active{ background: linear-gradient(90deg,var(--accent),var(--accent-2)); color:#021018; border-color: rgba(255,255,255,0.03) }
 .lang-btn:focus{ outline:none; box-shadow:0 6px 18px rgba(124,92,255,0.12) }
