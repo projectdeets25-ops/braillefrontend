@@ -54,6 +54,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
   const ttsFallbackTimerRef = useRef(null);
   const utterStartedRef = useRef(false);
   const [ttsStatus, setTtsStatus] = useState('');
+  const audioRef = useRef(null);
   // react-speech-kit removed to avoid incompatible peer deps; using native + mespeak fallbacks
 
   // Helper: strip markdown to plain text for TTS and highlighting
@@ -188,14 +189,20 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
         setTtsStatus('speak error: ' + (err && err.message ? err.message : String(err)));
       }
 
-      // after 1500ms, if not started, show status (don't auto-replace)
-      ttsFallbackTimerRef.current = setTimeout(() => {
+      // after 1200ms, if not started, attempt server fallback
+      ttsFallbackTimerRef.current = setTimeout(async () => {
         ttsFallbackTimerRef.current = null;
         if (!started && !isSpeaking) {
-          console.warn('[TTS] native did not start within timeout');
-          setTtsStatus('native did not start');
+          console.warn('[TTS] native did not start within timeout - trying server fallback');
+          setTtsStatus('native did not start — trying server fallback');
+          try {
+            await fetchTtsFromServer(plain, utter.lang);
+          } catch (err) {
+            console.error('[TTS] server fallback failed', err);
+            setTtsStatus('server fallback failed');
+          }
         }
-      }, 1500);
+      }, 1200);
 
       // cleanup: remove onStart when utter ends or errors
       const cleanup = () => {
@@ -207,6 +214,41 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     } catch (e) {
       console.error('[TTS] speak failed', e);
       setTtsStatus('failed');
+    }
+  };
+
+  // Server TTS fallback: expects POST /api/tts returning audio binary (e.g., mp3)
+  const fetchTtsFromServer = async (text, lang) => {
+    if (!text) throw new Error('no text');
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, lang })
+      });
+      if (!res.ok) throw new Error('TTS server error ' + res.status);
+      const arrayBuffer = await res.arrayBuffer();
+      const contentType = res.headers.get('Content-Type') || 'audio/mpeg';
+      const blob = new Blob([arrayBuffer], { type: contentType });
+      const url = URL.createObjectURL(blob);
+      if (audioRef.current) {
+        try { audioRef.current.pause(); } catch (e) {}
+        URL.revokeObjectURL(audioRef.current.src);
+      }
+      audioRef.current = new Audio(url);
+      audioRef.current.onended = () => {
+        setIsSpeaking(false);
+        setIsPaused(false);
+        setTtsStatus('');
+        try { URL.revokeObjectURL(url); } catch (e) {}
+      };
+      await audioRef.current.play();
+      setIsSpeaking(true);
+      setIsPaused(false);
+      setTtsStatus('playing (server)');
+    } catch (err) {
+      console.error('[TTS] fetchTtsFromServer error', err);
+      throw err;
     }
   };
 
