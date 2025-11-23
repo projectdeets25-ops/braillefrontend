@@ -49,6 +49,33 @@
 
 .modal-main{ background: transparent; padding:8px; overflow:auto; border-radius:10px; min-height:0 }
 .rendered-markdown{ color:var(--text); line-height:1.7; font-size:1rem }
+.modal-footer { padding:16px 20px; border-top:1px solid rgba(255,255,255,0.02); display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap }
+.modal-edit-button, .modal-save-button, .modal-close-button { padding:8px 12px; border-radius:8px; border:none; cursor:pointer }
+.modal-edit-button { background: linear-gradient(90deg,var(--accent),var(--accent-2)); color:#021018 }
+.modal-save-button { background:#16a34a; color:white }
+.modal-close-button { background: rgba(255,255,255,0.03); color:var(--text) }
+.modal-delete-button { background:#ef4444; color:white; border:none; padding:8px 12px; border-radius:8px; cursor:pointer }
+
+.note-edit-form { display:flex; flex-direction:column; gap:8px }
+.note-edit-form textarea { min-height:180px; padding:12px; font-size:0.98rem; line-height:1.45; border-radius:8px; background: rgba(255,255,255,0.02); color:var(--text); border:1px solid rgba(255,255,255,0.03) }
+.note-edit-form input { padding:10px; border-radius:8px; background: rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.03); color:var(--text) }
+
+.modal-note-content { max-height: 60vh; overflow:auto }
+
+/* Markdown content styling */
+.modal-note-content h1,
+.modal-note-content h2,
+.modal-note-content h3,
+.modal-note-content h4,
+.modal-note-content h5,
+.modal-note-content h6 {
+  color: #2c3e50;
+  margin: 24px 0 16px 0;
+  font-weight: 600;
+  line-height: 1.3;
+  border-bottom: 1px solid #f0f0f0;
+  padding-bottom: 8px;
+}
 
 .lang-selector{ display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap }
 
@@ -269,5 +296,20 @@
     width: 36px;
     height: 36px;
     font-size: 1.3rem;
+  }
+}
+
+/* Make modal grid stack on small screens so it's responsive */
+@media (max-width: 900px) {
+  .modal-grid {
+    grid-template-columns: 1fr;
+  }
+  .modal-side {
+    order: 2;
+    width: 100%;
+    padding: 12px 8px;
+  }
+  .modal-main {
+    order: 1;
   }
 }

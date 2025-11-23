@@ -144,22 +144,42 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     utter.lang = langCodeFinal;
 
     // Try to pick a matching voice for the language to improve reliability (some browsers need voice selection)
-    try {
-      const pickVoice = (langPrefix) => {
+    const pickAndAssignVoice = () => {
+      try {
         const voices = window.speechSynthesis.getVoices() || [];
-        if (!voices.length) return null;
-        const lp = langPrefix.toLowerCase();
-        // prefer exact prefix match, then contains
+        if (!voices.length) return false;
+        const lp = (langCodeFinal || 'en-US').toLowerCase().split('-')[0];
         let v = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith(lp));
         if (!v) v = voices.find((v) => v.lang && v.lang.toLowerCase().includes(lp));
-        return v || null;
-      };
+        if (v) {
+          utter.voice = v;
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    };
 
-      const prefix = (langCodeFinal || 'en-US').split('-')[0];
-      const chosen = pickVoice(prefix);
-      if (chosen) utter.voice = chosen;
-    } catch (e) {
-      // ignore voice selection errors
+    // If voices are not yet loaded, wait for onvoiceschanged once then speak
+    const voices = window.speechSynthesis.getVoices() || [];
+    if (voices.length === 0) {
+      // try to speak after voices load; attach a one-time handler
+      const onVoices = () => {
+        try {
+          pickAndAssignVoice();
+        } catch (e) {}
+        window.speechSynthesis.onvoiceschanged = null;
+        // speak now that voice may be assigned
+        try {
+          utteranceRef.current = utter;
+          window.speechSynthesis.speak(utter);
+        } catch (e) {
+          // fallback: still try
+          try { window.speechSynthesis.speak(utter); } catch (err) {}
+        }
+      };
+      window.speechSynthesis.onvoiceschanged = onVoices;
+    } else {
+      pickAndAssignVoice();
     }
 
     utter.onstart = () => {
@@ -194,7 +214,13 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     };
 
     utteranceRef.current = utter;
-    window.speechSynthesis.speak(utter);
+    // If voices were already present we can speak immediately, otherwise onVoices handler will speak.
+    try {
+      const allVoices = window.speechSynthesis.getVoices() || [];
+      if (allVoices.length > 0) window.speechSynthesis.speak(utter);
+    } catch (e) {
+      try { window.speechSynthesis.speak(utter); } catch (err) {}
+    }
   };
 
   const handlePlayPause = () => {
@@ -204,20 +230,24 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
 
     // language code choice
     const langCode = activeLang === 'hindi' ? 'hi-IN' : 'en-US';
-
-    if (isSpeaking && !isPaused) {
-      // pause
-      window.speechSynthesis.pause();
+    // New logic: prefer actual speechSynthesis state for robustness
+    const synth = window.speechSynthesis;
+    if (synth.speaking && !synth.paused) {
+      synth.pause();
       setIsPaused(true);
-    } else if (isSpeaking && isPaused) {
-      // resume
-      window.speechSynthesis.resume();
-      setIsPaused(false);
-    } else {
-      // start speaking
-      if (!supportedLang(activeLang) && !supportedLang(detectedLanguage)) return;
-      speakText(content, langCode);
+      setIsSpeaking(true);
+      return;
     }
+    if (synth.speaking && synth.paused) {
+      synth.resume();
+      setIsPaused(false);
+      setIsSpeaking(true);
+      return;
+    }
+
+    // Not currently speaking -> start
+    if (!supportedLang(activeLang) && !supportedLang(detectedLanguage)) return;
+    speakText(content, langCode);
   };
 
   const handleStop = () => {
@@ -271,23 +301,6 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
                 <div className="side-value small">{originalContent ? (originalContent.substring(0, 140) + (originalContent.length > 140 ? '...' : '')) : '—'}</div>
               </div>
 
-              {/* Compact TTS controls on the side */}
-              {/* <div className="side-tts">
-                {note && (() => {
-                  const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
-                  const content = g[activeLang] || g[Object.keys(g)[0]] || '';
-                  const langSupported = supportedLang(activeLang) || supportedLang(detectedLanguage);
-                  if (!content || !langSupported) return null;
-                  return (
-                    <>
-                      <button className="modal-play-button" onClick={handlePlayPause}>
-                        {isSpeaking ? (isPaused ? 'Resume' : 'Pause') : 'Play'}
-                      </button>
-                      <button className="modal-stop-button" onClick={handleStop}>Stop</button>
-                    </>
-                  );
-                })()}
-              </div> */}
             </aside>
 
             <section className="modal-main">
