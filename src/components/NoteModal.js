@@ -54,6 +54,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
   const ttsFallbackTimerRef = useRef(null);
   const utterStartedRef = useRef(false);
   const [ttsStatus, setTtsStatus] = useState('');
+  // react-speech-kit removed to avoid incompatible peer deps; using native + mespeak fallbacks
 
   // Helper: strip markdown to plain text for TTS and highlighting
   const stripMarkdown = (text) => {
@@ -147,6 +148,8 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     }
 
     utter.lang = langCodeFinal;
+
+    
 
     // Try to pick a matching voice for the language to improve reliability (some browsers need voice selection)
     const pickAndAssignVoice = () => {
@@ -402,6 +405,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
         return;
       }
     } catch (e) {}
+    
     window.speechSynthesis.cancel();
     setIsSpeaking(false);
     setIsPaused(false);
