@@ -53,6 +53,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
   const audioCtxRef = useRef(null);
   const ttsFallbackTimerRef = useRef(null);
   const utterStartedRef = useRef(false);
+  const [ttsStatus, setTtsStatus] = useState('');
 
   // Helper: strip markdown to plain text for TTS and highlighting
   const stripMarkdown = (text) => {
@@ -213,9 +214,10 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
 
     utteranceRef.current = utter;
     // Try speaking immediately (log voices available). If no native voices are present, fallback to mespeak (client-side WebAssembly/JS TTS).
-    try {
+      try {
       const allVoices = window.speechSynthesis.getVoices() || [];
       console.log('[TTS] speaking. voices available:', allVoices.length, 'lang:', langCodeFinal, 'voiceChosen:', utter.voice && utter.voice.name);
+      setTtsStatus(`voices:${allVoices.length} lang:${langCodeFinal} voice:${utter.voice && utter.voice.name ? utter.voice.name : 'none'}`);
 
       if (!voiceAssigned && (!allVoices || allVoices.length === 0)) {
         // Fallback: use mespeak (client-side JS TTS) to synthesize without server.
@@ -256,6 +258,7 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
           }
 
           console.log('[TTS] mespeak speak (voiceLoaded=' + voiceLoaded + ')');
+          setTtsStatus('using mespeak fallback');
           const ok = ms.speak(plain);
           utteranceRef.current = { type: 'mespeak', module: ms };
           setIsSpeaking(true);
@@ -268,44 +271,49 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
       }
 
       // speak natively, but set a fallback timer: if onstart doesn't fire quickly, fallback to mespeak
-      try {
-        utterStartedRef.current = false;
-        window.speechSynthesis.speak(utter);
-        if (!utterStartedRef.current) {
-          // wait up to 900ms for onstart; if not started, fallback
-          ttsFallbackTimerRef.current = setTimeout(async () => {
-            ttsFallbackTimerRef.current = null;
-            if (!utterStartedRef.current) {
-              console.warn('[TTS] native utter did not start, falling back to mespeak');
-              // try mespeak fallback
-              try {
-                if (!mespeakRef.current) {
-                  const mespeakModule = await import('mespeak');
-                  try {
-                    const cfg = (await import('mespeak/src/mespeak_config.json')).default;
-                    mespeakModule.loadConfig(cfg);
-                  } catch (e) { console.warn('[TTS] mespeak config load failed', e); }
-                  mespeakRef.current = mespeakModule;
-                }
-                const ms = mespeakRef.current;
+        try {
+          utterStartedRef.current = false;
+          setTtsStatus('attempting native speak');
+          window.speechSynthesis.speak(utter);
+          if (!utterStartedRef.current) {
+            // wait up to 900ms for onstart; if not started, fallback
+            ttsFallbackTimerRef.current = setTimeout(async () => {
+              ttsFallbackTimerRef.current = null;
+              if (!utterStartedRef.current) {
+                console.warn('[TTS] native utter did not start, falling back to mespeak');
+                setTtsStatus('native did not start — falling back');
+                // try mespeak fallback
                 try {
-                  const v = (await import('mespeak/voices/en/en-us.json')).default;
-                  ms.loadVoice(v);
-                } catch (e) { /* ignore */ }
-                ms.speak(plain);
-                utteranceRef.current = { type: 'mespeak', module: ms };
-                setIsSpeaking(true);
-                setIsPaused(false);
-              } catch (err) {
-                console.error('[TTS] mespeak fallback after no-start failed', err);
+                  if (!mespeakRef.current) {
+                    const mespeakModule = await import('mespeak');
+                    try {
+                      const cfg = (await import('mespeak/src/mespeak_config.json')).default;
+                      mespeakModule.loadConfig(cfg);
+                    } catch (e) { console.warn('[TTS] mespeak config load failed', e); }
+                    mespeakRef.current = mespeakModule;
+                  }
+                  const ms = mespeakRef.current;
+                  try {
+                    const v = (await import('mespeak/voices/en/en-us.json')).default;
+                    ms.loadVoice(v);
+                  } catch (e) { /* ignore */ }
+                  setTtsStatus('mespeak fallback speaking');
+                  ms.speak(plain);
+                  utteranceRef.current = { type: 'mespeak', module: ms };
+                  setIsSpeaking(true);
+                  setIsPaused(false);
+                } catch (err) {
+                  console.error('[TTS] mespeak fallback after no-start failed', err);
+                  setTtsStatus('fallback failed');
+                }
               }
-            }
-          }, 900);
+            }, 900);
+          }
+        } catch (e) {
+          console.error('[TTS] initial speak failed', e);
+          setTtsStatus('native speak error');
+          try { window.speechSynthesis.speak(utter); } catch (err) { console.error('[TTS] fallback speak failed', err); setTtsStatus('speak failed'); }
         }
-      } catch (e) {
-        console.error('[TTS] initial speak failed', e);
-        try { window.speechSynthesis.speak(utter); } catch (err) { console.error('[TTS] fallback speak failed', err); }
-      }
     } catch (e) {
       console.error('[TTS] initial speak failed', e);
       try { window.speechSynthesis.speak(utter); } catch (err) { console.error('[TTS] fallback speak failed', err); }
@@ -527,6 +535,12 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
               </div>
             );
           })()}
+          {/* inline TTS status for debugging on devices without console access */}
+          {ttsStatus && (
+            <div className="tts-status" style={{ marginRight: '12px', color: '#ffd', fontSize: '0.85rem', opacity: 0.9 }}>
+              {ttsStatus}
+            </div>
+          )}
           {isAdmin && !editing && (
             <button className="modal-edit-button" onClick={() => setEditing(true)}>Edit</button>
           )}
