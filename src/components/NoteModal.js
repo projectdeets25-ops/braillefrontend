@@ -159,27 +159,12 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
       return false;
     };
 
-    // If voices are not yet loaded, wait for onvoiceschanged once then speak
-    const voices = window.speechSynthesis.getVoices() || [];
-    if (voices.length === 0) {
-      // try to speak after voices load; attach a one-time handler
-      const onVoices = () => {
-        try {
-          pickAndAssignVoice();
-        } catch (e) {}
-        window.speechSynthesis.onvoiceschanged = null;
-        // speak now that voice may be assigned
-        try {
-          utteranceRef.current = utter;
-          window.speechSynthesis.speak(utter);
-        } catch (e) {
-          // fallback: still try
-          try { window.speechSynthesis.speak(utter); } catch (err) {}
-        }
-      };
-      window.speechSynthesis.onvoiceschanged = onVoices;
-    } else {
+    // Attempt to assign a voice immediately if available. Do NOT delay speaking waiting for voices,
+    // because on mobile browsers waiting for voices can move us out of the user gesture and block audio.
+    try {
       pickAndAssignVoice();
+    } catch (e) {
+      // ignore
     }
 
     utter.onstart = () => {
