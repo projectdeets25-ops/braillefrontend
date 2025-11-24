@@ -341,6 +341,154 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
     setCurrentWordIndex(-1);
   };
 
+  // Print the current note content (selected language) via browser print dialog (user can save as PDF)
+  const escapeHtml = (str) => {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+
+  const handlePrint = () => {
+    try {
+      const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
+      const content = g[activeLang] || g[Object.keys(g)[0]] || '';
+      // Build basic HTML for printing. For braille keep preformatted; for others render simple paragraphs.
+      let bodyHtml = '';
+      if ((activeLang || '').toLowerCase().includes('braille')) {
+        bodyHtml = `<pre style="font-size:18px; line-height:1.4; white-space:pre-wrap;">${escapeHtml(content)}</pre>`;
+      } else {
+        // Convert simple Markdown to clean HTML for printing (remove hashes, format headers/lists/inline)
+        const mdToHtml = (raw) => {
+          const esc = escapeHtml(raw || '');
+          const lines = esc.split(/\r?\n/);
+          let out = '';
+          let inUl = false;
+          let inOl = false;
+          let paraBuffer = [];
+
+          const flushPara = () => {
+            if (paraBuffer.length) {
+              const txt = paraBuffer.join(' ').replace(/\s+/g, ' ');
+              out += `<p style="margin:0 0 12px 0;">${txt}</p>`;
+              paraBuffer = [];
+            }
+          };
+
+          const inlineFmt = (s) => {
+            return s
+              .replace(/`([^`]+)`/g, '<code>$1</code>')
+              .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+              .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+              .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+          };
+
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) {
+              // blank line -> close lists and flush paragraph
+              if (inUl) { out += '</ul>'; inUl = false; }
+              if (inOl) { out += '</ol>'; inOl = false; }
+              flushPara();
+              continue;
+            }
+
+            // headers
+            const hMatch = line.match(/^(#{1,6})\s*(.+)$/);
+            if (hMatch) {
+              if (inUl) { out += '</ul>'; inUl = false; }
+              if (inOl) { out += '</ol>'; inOl = false; }
+              flushPara();
+              const level = Math.min(6, hMatch[1].length);
+              out += `<h${level} style="margin:8px 0;">${inlineFmt(hMatch[2])}</h${level}>`;
+              continue;
+            }
+
+            // ordered list
+            const olMatch = line.match(/^\d+\.\s+(.+)$/);
+            if (olMatch) {
+              flushPara();
+              if (inUl) { out += '</ul>'; inUl = false; }
+              if (!inOl) { out += '<ol style="margin:0 0 12px 20px;">'; inOl = true; }
+              out += `<li>${inlineFmt(olMatch[1])}</li>`;
+              continue;
+            }
+
+            // unordered list
+            const ulMatch = line.match(/^[-*+]\s+(.+)$/);
+            if (ulMatch) {
+              flushPara();
+              if (inOl) { out += '</ol>'; inOl = false; }
+              if (!inUl) { out += '<ul style="margin:0 0 12px 20px;">'; inUl = true; }
+              out += `<li>${inlineFmt(ulMatch[1])}</li>`;
+              continue;
+            }
+
+            // regular text -> accumulate in paragraph buffer
+            paraBuffer.push(inlineFmt(line));
+          }
+
+          if (inUl) out += '</ul>';
+          if (inOl) out += '</ol>';
+          flushPara();
+          return out || '<p></p>';
+        };
+
+        bodyHtml = mdToHtml(String(content));
+      }
+
+      const title = `${note && note.detectedSubject ? note.detectedSubject : 'Notes'} - ${activeLang || 'content'}`;
+      // Use a hidden iframe to avoid popup blockers — write content there and invoke print
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.style.visibility = 'hidden';
+      document.body.appendChild(iframe);
+      const idoc = iframe.contentDocument || iframe.contentWindow.document;
+      idoc.open();
+      idoc.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial; color:#0f1724; padding:24px; }
+          h1 { margin:0 0 8px 0; font-size:20px }
+          h2 { margin:0 0 16px 0; font-size:14px; color:#555 }
+          pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; }
+        </style>
+      </head><body>
+        <h1>${escapeHtml(note && note.detectedSubject ? note.detectedSubject : 'Notes')}</h1>
+        <h2>Language: ${escapeHtml(activeLang || 'unknown')}</h2>
+        <div>${bodyHtml}</div>
+      </body></html>`);
+      idoc.close();
+
+      const printAndCleanup = () => {
+        try {
+          const iw = iframe.contentWindow || iframe;
+          iw.focus();
+          if (typeof iw.print === 'function') iw.print();
+        } catch (e) {
+          console.error('Print failed', e);
+        } finally {
+          setTimeout(() => {
+            try { document.body.removeChild(iframe); } catch (e) {}
+          }, 500);
+        }
+      };
+
+      // Some browsers require slight delay
+      setTimeout(printAndCleanup, 300);
+    } catch (err) {
+      console.error('Print error', err);
+      alert('Failed to open print dialog.');
+    }
+  };
+
   return (
     <div 
       className="modal-backdrop" 
@@ -477,6 +625,16 @@ const NoteModal = ({ note, isOpen, onClose, formatDate, isAdmin }) => {
           {isAdmin && !editing && (
             <button className="modal-edit-button" onClick={() => setEditing(true)}>Edit</button>
           )}
+
+          {/* Print button for current language content */}
+          {note && (() => {
+            const g = typeof note.generatedNotes === 'object' ? note.generatedNotes : { english: note.generatedNotes };
+            const content = g[activeLang] || g[Object.keys(g)[0]] || '';
+            if (!content) return null;
+            return (
+              <button className="modal-print-button" onClick={handlePrint}>Print</button>
+            );
+          })()}
 
           {isAdmin && editing && (
             <button
