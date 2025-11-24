@@ -88,7 +88,7 @@ function App() {
             <button
               key={s}
               className={`nav-item ${selectedSubject === s ? 'active' : ''}`}
-              onClick={() => setSelectedSubject(s)}
+              onClick={() => { setSelectedSubject(s); setAppliedFilters({ subject: s }); fetchNotes({ subject: s }, 1); }}
             >
               {s}
             </button>
@@ -146,8 +146,8 @@ function App() {
                   className="subject-card hero"
                   role="button"
                   tabIndex={0}
-                  onClick={() => setSelectedSubject(s.key)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') setSelectedSubject(s.key); }}
+                  onClick={() => { setSelectedSubject(s.key); setAppliedFilters({ subject: s.key }); fetchNotes({ subject: s.key }, 1); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { setSelectedSubject(s.key); setAppliedFilters({ subject: s.key }); fetchNotes({ subject: s.key }, 1); } }}
                   style={{ borderColor: s.color }}
                 >
                   <div className="subject-icon" style={{ backgroundColor: s.color }}>
