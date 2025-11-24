@@ -133,12 +133,16 @@ function App() {
         <main className="content">
           {!selectedSubject ? (
             <div className="subjects-grid hero-grid" aria-hidden={false}>
-              {[
+            {[
                 { key: 'Mathematics', label: 'Math problems, equations', icon: '∑', color: '#FF6B6B' },
                 { key: 'Physics', label: 'Concepts & laws', icon: '🔭', color: '#6BCB77' },
                 { key: 'Chemistry', label: 'Reactions & compounds', icon: '⚗️', color: '#4D96FF' },
                 { key: 'Biology', label: 'Living organisms', icon: '🧬', color: '#FFD93D' },
                 { key: 'Programming', label: 'Code & algorithms', icon: '</>', color: '#9B5DE5' },
+                { key: 'History', label: 'Events & figures', icon: '📜', color: '#FF8C42' },
+                { key: 'Geography', label: 'Maps & places', icon: '🗺️', color: '#22C1C3' },
+                { key: 'Literature', label: 'Books & analysis', icon: '📚', color: '#F15BB5' },
+                { key: 'Music', label: 'Theory & composers', icon: '🎵', color: '#4361EE' },
                 { key: 'General', label: 'Miscellaneous', icon: '📌', color: '#9AA5FF' }
               ].map((s) => (
                 <div
@@ -162,22 +166,31 @@ function App() {
             </div>
           ) : (
             <div className="subject-page">
-              <div className="subject-page-header">
-                <button className="back-to-subjects" onClick={() => { setSelectedSubject(''); setAppliedFilters({}); fetchNotes({}, 1); }}>
-                  ← Back
-                </button>
-                <h2 className="subject-title">{selectedSubject}</h2>
-              </div>
+              {loading ? (
+                <div className="subject-loading" role="status" aria-live="polite">
+                  <div className="loading-spinner" style={{ width: 56, height: 56, borderTopColor: 'var(--accent)' }}></div>
+                  <p style={{ marginTop: 12 }}>Loading {selectedSubject} notes...</p>
+                </div>
+              ) : (
+                <>
+                  <div className="subject-page-header">
+                    <button className="back-to-subjects" onClick={() => { setSelectedSubject(''); setAppliedFilters({}); fetchNotes({}, 1); }}>
+                      ← Back
+                    </button>
+                    <h2 className="subject-title">{selectedSubject}</h2>
+                  </div>
 
-              <NotesList 
-                notes={notes}
-                pagination={pagination}
-                loading={loading}
-                error={error}
-                onPageChange={handlePageChange}
-                appliedFilters={appliedFilters}
-                isAdmin={isAdmin}
-              />
+                  <NotesList 
+                    notes={notes}
+                    pagination={pagination}
+                    loading={loading}
+                    error={error}
+                    onPageChange={handlePageChange}
+                    appliedFilters={appliedFilters}
+                    isAdmin={isAdmin}
+                  />
+                </>
+              )}
             </div>
           )}
         </main>
